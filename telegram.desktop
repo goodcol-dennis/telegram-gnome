@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Telegram
+Comment=Telegram Web (native wrapper)
+Exec=/home/dennis/projects/telegram/telegram.py
+Icon=/home/dennis/projects/telegram/telegram.svg
+Type=Application
+Categories=Network;Chat;InstantMessaging;
+StartupWMClass=com.local.Telegram
+StartupNotify=true
+Terminal=false
