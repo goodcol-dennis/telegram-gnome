@@ -29,7 +29,6 @@ USER_AGENT = (
 
 CLIPBOARD_BRIDGE_JS = """
 (function() {
-    // Intercept paste events — if no image in clipboardData, ask Python
     document.addEventListener('paste', function(e) {
         if (e.clipboardData && e.clipboardData.files.length > 0) return;
         var text = (e.clipboardData && e.clipboardData.getData('text/plain')) || '';
@@ -39,14 +38,25 @@ CLIPBOARD_BRIDGE_JS = """
         window.webkit.messageHandlers.clipboardBridge.postMessage('paste');
     }, true);
 
-    // Called from Python with base64 image data
     window._injectClipboardImage = function(b64, mime, filename) {
         var arr = Uint8Array.from(atob(b64), function(c) { return c.charCodeAt(0); });
         var file = new File([arr], filename || 'clipboard.png', {type: mime});
         var dt = new DataTransfer();
         dt.items.add(file);
 
-        // Try to find an existing file input
+        // Dispatch synthetic paste event with file data
+        try {
+            var pasteEvent = new ClipboardEvent('paste', {
+                bubbles: true,
+                cancelable: true,
+                clipboardData: dt
+            });
+            var target = document.activeElement || document;
+            target.dispatchEvent(pasteEvent);
+            if (pasteEvent.defaultPrevented) return;
+        } catch(e) {}
+
+        // Fallback: find existing file input
         var inputs = document.querySelectorAll('input[type="file"]');
         if (inputs.length > 0) {
             var input = inputs[inputs.length - 1];
@@ -55,20 +65,18 @@ CLIPBOARD_BRIDGE_JS = """
             return;
         }
 
-        // Click the attach button to create a file input, then fill it
-        var attachBtn = document.querySelector('.AttachMenu button, .attach-file, button[aria-label="Attach"]');
-        if (!attachBtn) return;
-        var observer = new MutationObserver(function(mutations, obs) {
-            var newInput = document.querySelector('input[type="file"]');
-            if (newInput) {
-                obs.disconnect();
-                newInput.files = dt.files;
-                newInput.dispatchEvent(new Event('change', {bubbles: true}));
+        // Fallback: drop event on composer
+        try {
+            var composer = document.querySelector('.custom-scroll, .messages-container, #editable-message-text, [contenteditable="true"]');
+            if (composer) {
+                var dropEvent = new DragEvent('drop', {
+                    bubbles: true,
+                    cancelable: true,
+                    dataTransfer: dt
+                });
+                composer.dispatchEvent(dropEvent);
             }
-        });
-        observer.observe(document.body, {childList: true, subtree: true});
-        attachBtn.click();
-        setTimeout(function() { observer.disconnect(); }, 3000);
+        } catch(e) {}
     };
 })();
 """
@@ -118,7 +126,6 @@ class TelegramWindow(Adw.ApplicationWindow):
         content_manager.connect(
             "script-message-received::clipboardBridge", self._on_paste_requested
         )
-        # Inject JS that intercepts paste and asks Python for image data
         clipboard_js = WebKit.UserScript.new(
             source=CLIPBOARD_BRIDGE_JS,
             injected_frames=WebKit.UserContentInjectedFrames.ALL_FRAMES,
@@ -166,7 +173,6 @@ class TelegramWindow(Adw.ApplicationWindow):
         ):
             request.allow()
             return True
-        # Clipboard read/write — needed for pasting images
         if hasattr(WebKit, "ClipboardPermissionRequest") and isinstance(
             request, WebKit.ClipboardPermissionRequest
         ):
@@ -195,8 +201,51 @@ class TelegramWindow(Adw.ApplicationWindow):
 
         if any(m.startswith("image/") for m in mime_types):
             clipboard.read_texture_async(None, self._on_clipboard_texture, None)
-        elif "text/uri-list" in mime_types or "text/plain" in mime_types or "text/plain;charset=utf-8" in mime_types:
+        elif "text/uri-list" in mime_types:
+            clipboard.read_async(
+                ["text/uri-list"], GLib.PRIORITY_DEFAULT, None,
+                self._on_clipboard_uri_stream, None,
+            )
+        elif "text/plain" in mime_types or "text/plain;charset=utf-8" in mime_types:
             clipboard.read_text_async(None, self._on_clipboard_text, None)
+
+    def _on_clipboard_uri_stream(self, clipboard, result, _user_data):
+        """Read text/uri-list via stream (works with GNOME portal)."""
+        try:
+            stream, mime = clipboard.read_finish(result)
+            data = stream.read_bytes(65536, None)
+            text = data.get_data().decode("utf-8", errors="replace").strip()
+            stream.close(None)
+            self._process_uri_text(text)
+        except Exception:
+            pass
+
+    def _process_uri_text(self, text):
+        """Parse URI list and inject first image file found."""
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("#"):
+                continue
+            if line.startswith("file://"):
+                path = unquote(urlparse(line).path)
+            elif line.startswith("/"):
+                path = line
+            else:
+                continue
+            p = Path(path)
+            if p.is_file() and p.suffix.lower() in (
+                ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+            ):
+                data = p.read_bytes()
+                b64 = base64.b64encode(data).decode("ascii")
+                mime_map = {
+                    ".png": "image/png", ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg", ".gif": "image/gif",
+                    ".webp": "image/webp", ".bmp": "image/bmp",
+                }
+                mime = mime_map.get(p.suffix.lower(), "image/png")
+                self._inject_image(b64, mime, p.name)
+                return
 
     def _on_clipboard_texture(self, clipboard, result, _user_data):
         """Handle raw image texture from clipboard."""
@@ -214,30 +263,7 @@ class TelegramWindow(Adw.ApplicationWindow):
             text = clipboard.read_text_finish(result)
             if not text:
                 return
-            # Parse file:// URIs or plain paths
-            text = text.strip()
-            for line in text.splitlines():
-                line = line.strip()
-                if line.startswith("file://"):
-                    path = unquote(urlparse(line).path)
-                elif line.startswith("/"):
-                    path = line
-                else:
-                    continue
-                p = Path(path)
-                if p.is_file() and p.suffix.lower() in (
-                    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
-                ):
-                    data = p.read_bytes()
-                    b64 = base64.b64encode(data).decode("ascii")
-                    mime_map = {
-                        ".png": "image/png", ".jpg": "image/jpeg",
-                        ".jpeg": "image/jpeg", ".gif": "image/gif",
-                        ".webp": "image/webp", ".bmp": "image/bmp",
-                    }
-                    mime = mime_map.get(p.suffix.lower(), "image/png")
-                    self._inject_image(b64, mime, p.name)
-                    return
+            self._process_uri_text(text)
         except Exception:
             pass
 
@@ -249,7 +275,6 @@ class TelegramWindow(Adw.ApplicationWindow):
     def _on_title_changed(self, webview, _pspec):
         """Extract unread count from page title and update dock badge."""
         title = webview.get_title() or ""
-        # Telegram Web sets title like "Telegram (3)" when there are unread messages
         match = re.search(r"\((\d+)\)", title)
         count = int(match.group(1)) if match else 0
         app = self.get_application()
