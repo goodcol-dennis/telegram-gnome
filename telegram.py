@@ -142,6 +142,7 @@ class TelegramWindow(Adw.ApplicationWindow):
         self.webview.connect("show-notification", self._on_show_notification)
         # Open external links in default browser
         self.webview.connect("decide-policy", self._on_decide_policy)
+        self.webview.connect("create", self._on_create_new_window)
 
         # Track title changes for dock badge (unread count)
         self.webview.connect("notify::title", self._on_title_changed)
@@ -281,12 +282,30 @@ class TelegramWindow(Adw.ApplicationWindow):
         if app:
             app.update_badge(count)
 
+    @staticmethod
+    def _on_create_new_window(webview, nav_action):
+        """Intercept new window requests (target=_blank) and open in browser."""
+        req = nav_action.get_request()
+        uri = req.get_uri() if req else None
+        if uri:
+            Gio.AppInfo.launch_default_for_uri(uri, None)
+        return None
+
     def _on_decide_policy(self, _webview, decision, decision_type):
         """Open non-Telegram links in the system browser."""
-        if decision_type == WebKit.PolicyDecisionType.NAVIGATION_ACTION:
+        if decision_type in (
+            WebKit.PolicyDecisionType.NAVIGATION_ACTION,
+            WebKit.PolicyDecisionType.NEW_WINDOW_ACTION,
+        ):
             nav = decision.get_navigation_action()
             req = nav.get_request()
             uri = req.get_uri()
+            # New window actions always open externally
+            if decision_type == WebKit.PolicyDecisionType.NEW_WINDOW_ACTION and uri:
+                decision.ignore()
+                Gio.AppInfo.launch_default_for_uri(uri, None)
+                return True
+            # Navigation away from Telegram opens externally
             if uri and not uri.startswith(TELEGRAM_URL) and not uri.startswith("https://web.telegram.org"):
                 decision.ignore()
                 Gio.AppInfo.launch_default_for_uri(uri, None)
