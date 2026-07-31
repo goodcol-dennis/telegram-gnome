@@ -1,10 +1,12 @@
 [Desktop Entry]
 Name=Telegram
 Comment=Telegram Web (native wrapper)
-Exec=/home/dennis/projects/telegram/telegram.py
-Icon=/home/dennis/projects/telegram/telegram.svg
+Exec=/home/dennis/projects/gct/telegram/telegram.py %u
+Icon=/home/dennis/projects/gct/telegram/telegram.svg
 Type=Application
 Categories=Network;Chat;InstantMessaging;
+Keywords=chat;im;messaging;messenger;telegram;
 StartupWMClass=com.local.Telegram
 StartupNotify=true
 Terminal=false
+MimeType=x-scheme-handler/tg;

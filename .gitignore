@@ -9,6 +9,7 @@ __pycache__/
 
 # Claude Code local settings
 .claude/settings.local.json
+.mcp.json
 
 # OS
 .DS_Store
@@ -16,3 +17,12 @@ Thumbs.db
 
 # Local data (persistent login/cookies)
 *.sqlite
+
+# Logs
+*.log
+
+# Rust e2e test build artifacts
+tests/narkina-e2e/target/
+
+# Local working notes (research sweep — family convention)
+SWEEP_NOTES.md
