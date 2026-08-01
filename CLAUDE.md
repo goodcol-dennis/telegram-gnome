@@ -66,7 +66,9 @@ the telegram-tt source-verified corpus sweep backing these rules).
 - App ID: `com.local.Telegram` (`com.local.Telegram.Test` in `--test` mode)
 - Data directory: `~/.local/share/telegram-web/` (`telegram-web-test/` in test mode)
 - Config: `~/.local/share/telegram-web/config.json` — `zoom` (persisted by the
-  zoom shortcuts) and `user_agent` (escape-hatch override; unset by default)
+  zoom shortcuts), `user_agent` (escape-hatch override; unset by default), and
+  `enable_service_workers` (default false — see Media formats; set true only
+  to re-test WebKit bug 239925 after an engine upgrade)
 - User agent: **stock WebKitGTK UA — never spoof Chrome.** telegram-tt's
   `IS_SAFARI` branch is its first-class tested path on WebKit; a Chrome UA
   enables Chromium-only code (round-video recording, wave transform, snap
@@ -214,11 +216,25 @@ Ctrl+=/− /0 and Ctrl+scroll. Persisted to config.json. Default 1.0, range 0.5�
 ### Media formats (system-side, verified present)
 - Animated stickers: Lottie via rlottie-WASM — no codecs needed.
 - Video stickers: WebM VP9 (`vp9dec`/`vavp9dec`); voice: OGG Opus
-  (`opusdec`; JS WASM fallback exists); video/GIFs: H.264 via service-worker
-  `/progressive/` streaming (`avdec_h264`/`vah264dec`).
-- Known engine issue: WebKit bug 239925 — media "loads forever" from the SW
-  `/progressive/` path (`FetchEvent.respondWith ... TypeError`). If
-  voice/video hang forever, suspect this first; a reload clears it.
+  (`opusdec`; JS WASM fallback exists); video/GIFs: H.264
+  (`avdec_h264`/`vah264dec`). All probed "probably" via canPlayType on this
+  engine (headless probe, 2026-07-31).
+
+### Service workers OFF (implemented — the GIF/video fix)
+- WebKit bug 239925: WebKitGTK fails `FetchEvent.respondWith` streaming on
+  Web A's service-worker `/progressive/` URLs — every *received* inline
+  video/GIF (and music file) hits MEDIA_ERR and telegram-tt toasts
+  "Video.Unsupported.Desktop". Own just-sent media plays (local blob), which
+  is the telltale split confirming codecs are fine.
+- Fix: `_set_webkit_feature(settings, "ServiceWorkers", False)` (default).
+  telegram-tt then sees `IS_PROGRESSIVE_SUPPORTED == false` and serves all
+  media as blob URLs by design. Verified headlessly: with the feature off,
+  `'serviceWorker' in navigator` is false.
+- Trade-offs: no offline asset cache (slower cold start); no >2GB downloads
+  (the SW `/download/` streamer was the only path — OPFS is absent in this
+  WebKit too). Notifications unaffected (page-created, no PushManager).
+- `config.json {"enable_service_workers": true}` restores SWs to re-test
+  after a WebKit upgrade; if 239925 is ever fixed, flip the default back.
 
 ### Robustness (implemented)
 - bfcache OFF (`set_enable_page_cache(False)`, playbook #28): cross-document

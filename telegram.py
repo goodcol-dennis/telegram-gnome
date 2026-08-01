@@ -84,6 +84,25 @@ def _save_zoom(level):
         json.dump(config, f)
 
 
+def _load_config(key, default=None):
+    try:
+        with open(CONFIG_FILE) as f:
+            return json.load(f).get(key, default)
+    except (OSError, ValueError, AttributeError):
+        return default
+
+
+def _set_webkit_feature(settings, identifier, enabled):
+    """Toggle a WebKit runtime feature by identifier. Returns True if applied."""
+    features = WebKit.Settings.get_all_features()
+    for i in range(features.get_length()):
+        feature = features.get(i)
+        if feature.get_identifier() == identifier:
+            settings.set_feature_enabled(feature, enabled)
+            return True
+    return False
+
+
 def _load_user_agent():
     """config.json {"user_agent": ...} escape hatch — None means keep the
     stock WebKitGTK UA (the correct default for Telegram Web A)."""
@@ -377,6 +396,22 @@ class TelegramWindow(Adw.ApplicationWindow):
         # cross-document; a single-window wrapper has no back/forward UI, so
         # bfcache buys nothing here.
         settings.set_enable_page_cache(False)
+        # Web A streams every received inline video/GIF (and music) through
+        # its service worker's /progressive/ URLs; WebKitGTK's
+        # FetchEvent.respondWith streaming is broken (WebKit bug 239925) →
+        # MEDIA_ERR on the <video> → telegram-tt shows
+        # "Video.Unsupported.Desktop" and received GIFs/videos never render
+        # (own just-sent media plays — it uses the local blob, which is also
+        # the proof the codecs are fine). With service workers off,
+        # IS_PROGRESSIVE_SUPPORTED is false and telegram-tt serves all media
+        # as blob URLs by design. Costs: no offline asset cache (slower cold
+        # start) and no >2GB downloads (OPFS is also absent in this WebKit).
+        # Notifications are unaffected (page-created; no PushManager).
+        # config.json {"enable_service_workers": true} re-enables to re-test
+        # after a WebKit upgrade.
+        if not _load_config("enable_service_workers", False):
+            if _set_webkit_feature(settings, "ServiceWorkers", False):
+                self._devlog("service workers disabled (WebKit bug 239925)")
         if DEV_LOGGING:
             settings.set_enable_write_console_messages_to_stdout(True)
 
