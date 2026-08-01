@@ -83,7 +83,7 @@ the telegram-tt source-verified corpus sweep backing these rules).
 4. **External links in browser** — but only deliberate user clicks leave the app (gesture-gated policy, playbook §1). Redirects/form-submissions/JS navigations stay in-app. Dot-boundary domain matching only. t.me/tg:// links become in-app deep links, never external.
 5. **No unconditional debug logging** — `console.log`, `print()`, `set_enable_developer_extras()` and console-to-stdout are permitted only behind `DEV_LOGGING` (`--dev`/`--test`). Nothing may log on a default launch.
 6. **Never monkey-patch browser APIs** — Overriding `Notification`, `AudioContext`, `URL.createObjectURL`, or similar in user scripts breaks the app in opaque ways. Native WebKit APIs exist for every case (e.g. `initialize_notification_permissions`). Defining a *missing* API is sanctioned polyfilling — the `navigator.setAppBadge` badge shim exists precisely because WebKitGTK lacks it.
-7. **No `WEBKIT_DISABLE_DMABUF_RENDERER` / `GSK_RENDERER`** — Causes severe keyboard/rendering lag on Intel Arc. Shader warnings are cosmetic; ignore them.
+7. **No `WEBKIT_DISABLE_DMABUF_RENDERER` / `GSK_RENDERER`** — Causes severe keyboard/rendering lag on Intel Arc. Shader warnings are cosmetic; ignore them. The one sanctioned knob is `WEBKIT_DMABUF_RENDERER_DISABLE_GBM=1` (set before `import gi`, playbook #29) — it fixes the Arrow Lake-P diagonal-shearing bug while keeping the zero-copy dmabuf path; `TELEGRAM_FORCE_DMABUF=1` bypasses it for re-testing.
 8. **Headless testing only — never launch on the live session** — Any run of the app for testing goes through [narkina](../narkina/) (the `tests/narkina-e2e` crate is the ready-made path). Do **not** run `./telegram.py` or `./install.sh` on the user's real compositor — `install.sh` relaunches the app by design. This applies to subagents too: state the constraint explicitly in their prompts.
 9. **App id ↔ desktop filename coupling** — The desktop entry must be named `com.local.Telegram.desktop` or GNOME Shell rejects every `Gio.Notification` (verified hard failure, playbook §2). The badge's `application://com.local.Telegram.desktop` string and install.sh must change together with it.
 10. **Suppress WebKitGTK context menu** — Return `True` from `context-menu` signal so Telegram's own right-click menu works.
@@ -221,6 +221,13 @@ Ctrl+=/− /0 and Ctrl+scroll. Persisted to config.json. Default 1.0, range 0.5�
   voice/video hang forever, suspect this first; a reload clears it.
 
 ### Robustness (implemented)
+- bfcache OFF (`set_enable_page_cache(False)`, playbook #28): cross-document
+  navigation + open IndexedDB deadlocks the new page's `open()` (verified on
+  Slack; preventative here — `open_deeplink()` navigates cross-document).
+  Smoking gun if it ever regresses: console line "WebSocket is closed due to
+  suspension."
+- `WEBKIT_DMABUF_RENDERER_DISABLE_GBM=1` before `import gi` (playbook #29):
+  fixes Arrow Lake-P dmabuf shearing with no latency cost (rule 7).
 - `web-process-terminated` → `reload()`, rate-limited to one per 10 s.
 - `Gio.bus_get_sync` wrapped in try/except — headless sessions have no bus;
   badge degrades instead of crashing at startup.

@@ -8,6 +8,17 @@ import sys
 import time
 from urllib.parse import quote, unquote, urlparse
 
+# Intel Arrow Lake-P on the i915 driver mis-negotiates dmabuf tiling modifiers:
+# frames arrive sheared into diagonal bands. Reproduced in stock GNOME Web, so
+# it is a driver/engine bug, not ours. GBM is what negotiates those modifiers,
+# so disabling only GBM sidesteps the bug while keeping the zero-copy dmabuf
+# path — unlike WEBKIT_DISABLE_DMABUF_RENDERER, which also clears it but falls
+# back to shared memory and costs noticeable input latency (rule 7, playbook #29).
+# Remove once the GPU is on the `xe` driver or Mesa/WebKit fix the negotiation.
+# TELEGRAM_FORCE_DMABUF=1 disables this guard entirely (to re-test the hardware).
+if os.environ.get("TELEGRAM_FORCE_DMABUF") != "1":
+    os.environ.setdefault("WEBKIT_DMABUF_RENDERER_DISABLE_GBM", "1")
+
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -359,6 +370,13 @@ class TelegramWindow(Adw.ApplicationWindow):
         settings.set_javascript_can_open_windows_automatically(True)
         settings.set_enable_developer_extras(DEV_LOGGING)
         settings.set_enable_smooth_scrolling(True)
+        # bfcache off (playbook #28, preventative): a cross-document navigation
+        # parks the old document in the back/forward cache with its IndexedDB
+        # connection still open, deadlocking the new page's open() — verified
+        # on Slack. Web A holds IndexedDB and open_deeplink() navigates
+        # cross-document; a single-window wrapper has no back/forward UI, so
+        # bfcache buys nothing here.
+        settings.set_enable_page_cache(False)
         if DEV_LOGGING:
             settings.set_enable_write_console_messages_to_stdout(True)
 
