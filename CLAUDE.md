@@ -257,6 +257,13 @@ Ctrl+=/− /0 and Ctrl+scroll. Persisted to config.json. Default 1.0, range 0.5�
 - Compat-gate insurance: `localStorage['tt-ignore-compat']='1'` pre-seeded
   (document-start user script) so a future `compatTest.js` probe addition
   degrades to a console warning instead of a dead app.
+- Known engine bug, not ours (playbook §4, open in WebKitGTK 2.52.3): the
+  network process can segfault under media load. Fingerprint is a *cluster*:
+  console "Network process crashed", Cache API / IndexedDB internal errors,
+  truncated downloads, **spontaneous logout** (auth lives in IndexedDB, which
+  that process hosts). If a logout report matches the cluster, restart the
+  app before suspecting ITP/cookies or re-authenticating — on-disk state
+  survives. Fixed only by the pending webkit2gtk security update.
 
 ### Dock Badge (implemented)
 1. **`navigator.setAppBadge` shim** (document-start user script) →
