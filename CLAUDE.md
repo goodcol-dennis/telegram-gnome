@@ -88,7 +88,7 @@ the telegram-tt source-verified corpus sweep backing these rules).
 7. **No `WEBKIT_DISABLE_DMABUF_RENDERER` / `GSK_RENDERER`** — Causes severe keyboard/rendering lag on Intel Arc. Shader warnings are cosmetic; ignore them. The one sanctioned knob is `WEBKIT_DMABUF_RENDERER_DISABLE_GBM=1` (set before `import gi`, playbook #29) — it fixes the Arrow Lake-P diagonal-shearing bug while keeping the zero-copy dmabuf path; `TELEGRAM_FORCE_DMABUF=1` bypasses it for re-testing.
 8. **Headless testing only — never launch on the live session** — Any run of the app for testing goes through [narkina](../narkina/) (the `tests/narkina-e2e` crate is the ready-made path). Do **not** run `./telegram.py` or `./install.sh` on the user's real compositor — `install.sh` relaunches the app by design. This applies to subagents too: state the constraint explicitly in their prompts.
 9. **App id ↔ desktop filename coupling** — The desktop entry must be named `com.local.Telegram.desktop` or GNOME Shell rejects every `Gio.Notification` (verified hard failure, playbook §2). The badge's `application://com.local.Telegram.desktop` string and install.sh must change together with it.
-10. **Suppress WebKitGTK context menu** — Return `True` from `context-menu` signal so Telegram's own right-click menu works.
+10. **Filter WebKitGTK context menu, don't blanket-suppress** — `_on_context_menu` strips the menu to spelling entries only (playbook #32): no spelling entries → suppress (`True`) so Telegram's own right-click menu works; over a misspelling → show just the suggestions, which are the only correction UI spell checking has.
 
 ## Change Propagation Map
 
@@ -249,7 +249,9 @@ Ctrl+=/− /0 and Ctrl+scroll. Persisted to config.json. Default 1.0, range 0.5�
   badge degrades instead of crashing at startup.
 - `hasattr(WebKit, "ClipboardPermissionRequest")` guard before isinstance.
 - Spell checking on, languages from `GLib.get_language_names()` filtered
-  (entries containing `.` and `C` match no hunspell dictionary).
+  (entries containing `.` and `C` match no hunspell dictionary). Corrections
+  come from the context-menu spelling filter (rule 10) — squiggles without it
+  are a half-feature.
 - Fullscreen (video player/media viewer) hides the header bar via
   `set_reveal_top_bars`.
 - Compat-gate insurance: `localStorage['tt-ignore-compat']='1'` pre-seeded

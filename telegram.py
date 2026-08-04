@@ -461,8 +461,10 @@ class TelegramWindow(Adw.ApplicationWindow):
             self._on_badge_message,
         )
 
-        # Suppress WebKitGTK's default context menu so Telegram's own menu works
-        self.webview.connect("context-menu", lambda *_: True)
+        # Suppress WebKitGTK's default context menu so Telegram's own menu
+        # works — except over a misspelling, where it is the only source of
+        # spelling suggestions (playbook #32)
+        self.webview.connect("context-menu", self._on_context_menu)
         # Allow notification and media permission requests
         self.webview.connect("permission-request", self._on_permission_request)
         # Permissions API must agree with Notification.permission
@@ -792,6 +794,34 @@ class TelegramWindow(Adw.ApplicationWindow):
         app = self.get_application()
         if app:
             app.update_badge(count)
+
+    # -- Context menu --
+
+    # Spelling entries WebKit builds when right-clicking a misspelled word
+    SPELLING_ACTIONS = (
+        WebKit.ContextMenuAction.SPELLING_GUESS,
+        WebKit.ContextMenuAction.NO_GUESSES_FOUND,
+        WebKit.ContextMenuAction.IGNORE_SPELLING,
+        WebKit.ContextMenuAction.LEARN_SPELLING,
+        WebKit.ContextMenuAction.IGNORE_GRAMMAR,
+    )
+
+    def _on_context_menu(self, _webview, context_menu, _hit_test_result):
+        """Hide WebKit's menu so Telegram's own right-click menus work, but
+        keep it when it carries spelling suggestions — stripped down to just
+        those, so no browser chrome leaks into the app.
+
+        Returning True suppresses the menu; False shows what we left in it.
+        """
+        items = context_menu.get_items()
+        spelling = [i for i in items
+                    if i.get_stock_action() in self.SPELLING_ACTIONS]
+        if not spelling:
+            return True
+        for item in items:
+            if item not in spelling:
+                context_menu.remove(item)
+        return False
 
     # -- Permissions --
 
